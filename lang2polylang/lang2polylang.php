@@ -8,6 +8,234 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
+
+
+/**
+ * 1. Limpieza de URLs y manejo especial de Portadas
+ */
+add_filter('page_link', 'cz_custom_home_links', 100, 2);
+add_filter('post_link', 'cz_custom_home_links', 100, 2);
+
+function cz_custom_home_links($url, $post_id) {
+    $post = get_post($post_id);
+    
+    // Si es la página home (EN), forzamos que sea la raíz
+    if ($post->post_name === 'home') {
+        return home_url('/');
+    }
+    
+    // Si es la página home-es (ES), quitamos cualquier prefijo /es/
+    if ($post->post_name === 'home-es') {
+        return home_url('/home-es/');
+    }
+
+    // Limpieza general para el resto de páginas
+    return str_replace(array('/es/', '/en/'), '/', $url);
+}
+
+/**
+ * 2. Corregir el Selector de Idiomas de Polylang
+ */
+add_filter('pll_the_languages_link', function($url, $slug, $locale) {
+    // Si el link lleva a 'home-es', limpiar prefijo
+    if (strpos($url, 'home-es') !== false) {
+        return home_url('/home-es/');
+    }
+    // Si el link lleva a 'home' (inglés), mandar a la raíz
+    if (strpos($url, '/home/') !== false || basename($url) === 'home') {
+        return home_url('/');
+    }
+    
+    return str_replace(array('/es/', '/en/'), '/', $url);
+}, 100, 3);
+
+
+/**
+ * 3. Redirección 301 de /home a la raíz /
+ * Esto evita que exista la página duplicada que mencionaste.
+ */
+add_action('template_redirect', function() {
+    if (is_page('home') && !is_front_page()) {
+        wp_redirect(home_url('/'), 301);
+        exit;
+    }
+});
+
+/**
+ * 4. Limpiar etiquetas Hreflang (SEO)
+ */
+add_filter('pll_rel_hreflang_attributes', function($hreflangs) {
+    foreach ($hreflangs as $lang => $url) {
+        if (strpos($url, 'home-es') !== false) {
+            $hreflangs[$lang] = home_url('/home-es/');
+        } elseif (strpos($url, '/home/') !== false) {
+            $hreflangs[$lang] = home_url('/');
+        } else {
+            $hreflangs[$lang] = str_replace(array('/es/', '/en/'), '/', $url);
+        }
+    }
+    return $hreflangs;
+}, 100);
+
+
+/**
+ * 5. Desactivar la validación canónica de Polylang
+ * IMPORTANTÍSIMO: Sin esto, Polylang detecta que la URL no tiene el prefijo
+ * reglamentario (/es/) y fuerza una redirección, rompiendo tus URLs personalizadas.
+ */
+add_filter('pll_check_canonical_url', '__return_false', 100);
+
+/**
+ * 6. Forzar vínculo en el Selector cuando estamos en la Raíz (Plantilla de Inicio)
+ * Al usar "Últimas entradas", Polylang a veces pierde el rastro de qué página 
+ * es la traducción de la portada. Esto asegura el cambio a /home-es/.
+ */
+add_filter('pll_the_languages_link', function($url, $slug, $locale) {
+    // Si el usuario está en la raíz (EN) y pulsa en el selector de Español
+    if ( is_front_page() && $slug === 'es' ) {
+        return home_url('/home-es/');
+    }
+    return $url;
+}, 110, 3);
+
+/**
+ * 7. Limpieza extra para Yoast SEO (wpseo_alternate_languages)
+ * Yoast tiene su propio filtro de idiomas que a veces ignora a Polylang.
+ */
+add_filter('wpseo_alternate_languages', function($alternates) {
+    foreach ($alternates as $lang => $url) {
+        if (strpos($url, 'home-es') !== false) {
+            $alternates[$lang] = home_url('/home-es/');
+        } elseif (strpos($url, '/home/') !== false) {
+            $alternates[$lang] = home_url('/');
+        } else {
+            $alternates[$lang] = str_replace(array('/es/', '/en/'), '/', $url);
+        }
+    }
+    return $alternates;
+}, 100);
+
+/**
+ * 1. Forzar el link del menú de idioma (Selector)
+ * Específicamente cuando estamos en la raíz o cuando el destino detectado sea /es/
+ */
+add_filter('pll_the_languages_link', function($url, $slug, $locale) {
+    // Si estamos en la raíz (Front Page) y el link es para el idioma español
+    if ( is_front_page() && $slug === 'es' ) {
+        return home_url('/home-es/');
+    }
+
+    // Si por alguna razón Polylang devuelve la URL del dominio + /es/
+    // (Ej: catenazapata.com/es/), lo corregimos a /home-es/
+    if ( $slug === 'es' && (strpos($url, '/es/') !== false && strlen(parse_url($url, PHP_URL_PATH)) <= 4) ) {
+        return home_url('/home-es/');
+    }
+
+    // Limpieza general para el resto de URLs (borrar /en/ o /es/ accidentales)
+    $url = str_replace(array('/es/', '/en/'), '/', $url);
+    return str_replace('catenazapata.com//', 'catenazapata.com/', $url);
+}, 120, 3);
+
+/**
+ * 2. Corregir etiquetas Hreflang (SEO) en el <head>
+ * Esto asegura que Google vea catenazapata.com/home-es/ como la versión española de la raíz
+ */
+add_filter('pll_rel_hreflang_attributes', function($hreflangs) {
+    // Si estamos en la página de inicio (Inglés)
+    if ( is_front_page() ) {
+        if ( isset($hreflangs['es']) ) {
+            $hreflangs['es'] = home_url('/home-es/');
+        }
+        if ( isset($hreflangs['en']) ) {
+            $hreflangs['en'] = home_url('/');
+        }
+    }
+    
+    // Si estamos físicamente en la página home-es
+    if ( is_page('home-es') ) {
+        if ( isset($hreflangs['en']) ) {
+            $hreflangs['en'] = home_url('/');
+        }
+        if ( isset($hreflangs['es']) ) {
+            $hreflangs['es'] = home_url('/home-es/');
+        }
+    }
+
+    // Limpieza recursiva para asegurar que no queden prefijos en otros hreflangs
+    foreach ($hreflangs as $lang => $url) {
+        $clean_url = str_replace(array('/es/', '/en/'), '/', $url);
+        $hreflangs[$lang] = str_replace('catenazapata.com//', 'catenazapata.com/', $clean_url);
+    }
+
+    return $hreflangs;
+}, 120);
+
+
+/**
+ * Interceptar los elementos del menú para corregir el selector de Polylang
+ */
+add_filter('wp_get_nav_menu_items', function($items, $menu, $args) {
+    foreach ($items as &$item) {
+        // Buscamos si el elemento es el selector de idioma español de Polylang
+        // Polylang suele usar clases como 'lang-item-es' o 'lang-item'
+        if (strpos($item->classes[0], 'lang-item-es') !== false || $item->title === 'ESP') {
+            
+            // Si estamos en la Home de inglés (o raíz), forzamos /home-es/
+            if (is_front_page() || is_home()) {
+                $item->url = home_url('/home-es/');
+            }
+        }
+        
+        // Limpieza preventiva: si cualquier link del menú contiene /es/ o /en/
+        $item->url = str_replace(array('/es/', '/en/'), '/', $item->url);
+        $item->url = str_replace('catenazapata.com//', 'catenazapata.com/', $item->url);
+    }
+    return $items;
+}, 20, 3);
+
+
+/**
+ * 1. Desactivar el redireccionamiento canónico de Polylang (ELIMINA EL BUCLE)
+ */
+add_filter('pll_check_canonical_url', '__return_false', 999);
+
+/**
+ * 2. Corregir el Menú y el Selector de Idiomas (ESP)
+ * Forzamos la URL exacta para evitar que Polylang inyecte /es/
+ */
+add_filter('pll_the_languages', function($languages) {
+    foreach ($languages as $key => $lang) {
+        if ($lang['slug'] === 'es') {
+            // Forzamos la URL limpia para la portada en español
+            if (is_front_page() || is_home() || strpos($lang['url'], 'home-es') !== false) {
+                $languages[$key]['url'] = home_url('/home-es/');
+            }
+        }
+        
+        // Limpieza de seguridad para cualquier idioma
+        $languages[$key]['url'] = str_replace(array('/es/', '/en/'), '/', $languages[$key]['url']);
+        $languages[$key]['url'] = str_replace('catenazapata.com//', 'catenazapata.com/', $languages[$key]['url']);
+    }
+    return $languages;
+}, 999);
+
+/**
+ * 3. Limpiar los enlaces del Menú de Navegación
+ */
+add_filter('nav_menu_link_attributes', function($atts, $item, $args) {
+    if (strpos($atts['href'], 'home-es') !== false) {
+        $atts['href'] = home_url('/home-es/');
+    }
+    // Eliminar cualquier rastro de /es/ o /en/ inyectado por el plugin
+    $atts['href'] = str_replace(array('/es/', '/en/'), '/', $atts['href']);
+    $atts['href'] = str_replace('catenazapata.com//', 'catenazapata.com/', $atts['href']);
+    
+    return $atts;
+}, 999, 3);
+
+
+
+
 add_action( 'admin_menu', function() {
 	add_management_page( 'Lang2Polylang', 'Lang2Polylang', 'manage_options', 'lang2polylang', 'l2p_admin_page' );
 } );
